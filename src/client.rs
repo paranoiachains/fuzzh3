@@ -210,7 +210,11 @@ impl Client {
             Err(e) => return Err(ClientError::Other(e.into())),
         };
 
-        if self.in_flight.insert(stream_id, InFlight::new()).is_some() {
+        if self
+            .in_flight
+            .insert(stream_id, InFlight::new(&req.path))
+            .is_some()
+        {
             return Err(ClientError::Other(anyhow::anyhow!(
                 "stream_id {stream_id} already existed"
             )));
@@ -260,7 +264,12 @@ impl Client {
                         .status
                         .ok_or_else(|| anyhow::anyhow!("missing :status"))?;
 
-                    completed.push(http::Response::new(status, state.headers, state.body));
+                    completed.push(http::Response::new(
+                        &state.path,
+                        status,
+                        state.headers,
+                        state.body,
+                    ));
                 }
 
                 Err(quiche::h3::Error::Done) => break,
@@ -284,14 +293,16 @@ fn hex_dump(buf: &[u8]) -> String {
 
 // Struct which stores sent request, but which response haven't been received yet
 struct InFlight {
+    path: String,
     status: Option<u16>,
     headers: HashMap<String, String>,
     body: Vec<u8>,
 }
 
 impl InFlight {
-    pub fn new() -> Self {
+    pub fn new(path: &str) -> Self {
         Self {
+            path: path.to_string(),
             status: None,
             headers: HashMap::new(),
             body: Vec::new(),

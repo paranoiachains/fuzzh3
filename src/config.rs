@@ -34,21 +34,38 @@ pub struct Args {
     #[arg(short, long, value_name = "URL")]
     /// URL to connect to
     pub url: String,
+
     #[arg(short, long, default_value_t = 443)]
     /// Target port
     pub port: u16,
+
     #[arg(long = "no-verify", default_value_t = false)]
     /// Don't verify server's certificate
     pub no_verify: bool,
+
     #[arg(short, long)]
     /// Path to wordlist
     pub wordlist: String,
+
     #[arg(short, long, default_value = "get")]
     /// HTTP method
     pub method: Method,
+
     #[arg(short = 'H', value_name = "KEY:VALUE", action = clap::ArgAction::Append)]
     /// Include headers in request
     pub headers: Vec<String>,
+
+    /// Match HTTP status codes (e.g. 200, 200-299)
+    #[arg(
+        long = "match-code",
+        value_name = "CODE|RANGE",
+        action = clap::ArgAction::Append
+    )]
+    pub match_codes: Option<Vec<String>>,
+
+    /// Match response body size (e.g. 0-1024)
+    #[arg(long = "match-size", value_name = "MIN-MAX")]
+    pub match_size: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]

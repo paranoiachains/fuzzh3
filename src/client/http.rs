@@ -49,14 +49,16 @@ impl Request {
 }
 
 pub struct Response {
+    pub path: String,
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
 }
 
 impl Response {
-    pub fn new(status: u16, headers: HashMap<String, String>, body: Vec<u8>) -> Self {
+    pub fn new(path: &str, status: u16, headers: HashMap<String, String>, body: Vec<u8>) -> Self {
         Self {
+            path: path.to_string(),
             status,
             headers,
             body,

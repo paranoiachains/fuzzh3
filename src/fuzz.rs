@@ -1,6 +1,7 @@
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::client::{self, ClientError, http};
+use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use std::{fs::File, io::BufRead, io::BufReader};
 
@@ -8,9 +9,9 @@ use std::io::Read;
 use std::io::Write;
 
 pub struct Fuzzer {
-    wordlist: BufReader<File>,
+    pub matcher: Matcher,
+    reader: BufReader<File>,
     client: client::Client,
-    matcher: Matcher,
     progress: ProgressBar,
 }
 
@@ -32,10 +33,10 @@ impl Fuzzer {
             .progress_chars("##~"),
         );
 
-        let matcher = Matcher::new(None);
+        let matcher = Matcher::default();
 
         Ok(Self {
-            wordlist: reader,
+            reader,
             client,
             matcher,
             progress,
@@ -46,11 +47,11 @@ impl Fuzzer {
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
 
-        let mut pending = Vec::new();
+        let mut pending = VecDeque::new();
 
-        for line in self.wordlist.by_ref().lines() {
+        for line in self.reader.by_ref().lines() {
             let word = line?.trim().to_string();
-            pending.push(word);
+            pending.push_back(word);
         }
 
         while !pending.is_empty() || self.client.has_in_flight() {
@@ -58,17 +59,17 @@ impl Fuzzer {
 
             for resp in self.client.poll_responses()? {
                 if self.matcher.matches(&resp) {
-                    writeln!(out, "[{}] /{}", resp.status, pending.last().unwrap())?;
+                    writeln!(out, "[{}] {}", resp.status, resp.path)?;
                 }
                 self.progress.inc(1);
             }
 
-            while let Some(word) = pending.last() {
-                let req = base_req.with_path(word);
+            while let Some(word) = pending.front() {
+                let req = base_req.with_path(&word);
 
                 match self.client.send_request(&req) {
                     Ok(_) => {
-                        pending.pop();
+                        pending.pop_front();
                     }
 
                     Err(ClientError::InFlightFull | ClientError::WouldBlock) => {
@@ -87,27 +88,46 @@ impl Fuzzer {
 
 pub struct Matcher {
     codes: Vec<std::ops::RangeInclusive<u16>>,
+    size: Option<RangeInclusive<usize>>,
 }
 
 impl Matcher {
-    pub fn new(codes: Option<Vec<RangeInclusive<u16>>>) -> Self {
-        let codes = codes.unwrap_or_else(|| {
-            vec![
-                200..=299,
-                301..=302,
-                307..=307,
-                401..=401,
-                403..=403,
-                405..=405,
-                500..=500,
-            ]
-        });
+    pub fn with_codes(mut self, codes: Vec<RangeInclusive<u16>>) -> Self {
+        self.codes = codes;
+        self
+    }
 
-        Self { codes }
+    pub fn with_size(mut self, size: RangeInclusive<usize>) -> Self {
+        self.size = Some(size);
+        self
     }
 
     pub fn matches(&self, resp: &http::Response) -> bool {
-        self.codes.iter().any(|r| r.contains(&resp.status))
+        if !self.codes.iter().any(|r| r.contains(&resp.status)) {
+            return false;
+        }
+
+        if let Some(ref size) = self.size {
+            size.contains(&resp.body.len())
+        } else {
+            true
+        }
+    }
+}
+
+impl Default for Matcher {
+    fn default() -> Self {
+        let codes = vec![
+            200..=299,
+            301..=302,
+            307..=307,
+            401..=401,
+            403..=403,
+            405..=405,
+            500..=500,
+        ];
+
+        Self { codes, size: None }
     }
 }
 
