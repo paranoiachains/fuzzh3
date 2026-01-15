@@ -1,25 +1,21 @@
 use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::client;
+use crate::client::{self, ClientError, http};
 use std::ops::RangeInclusive;
 use std::{fs::File, io::BufRead, io::BufReader};
 
-use std::io::{self, Write};
+use std::io::Read;
+use std::io::Write;
 
 pub struct Fuzzer {
     wordlist: BufReader<File>,
-    req: client::Request,
     client: client::Client,
     matcher: Matcher,
     progress: ProgressBar,
 }
 
 impl Fuzzer {
-    pub fn new(
-        req: client::Request,
-        client: client::Client,
-        wordlist_path: &str,
-    ) -> std::io::Result<Self> {
+    pub fn new(client: client::Client, wordlist_path: &str) -> std::io::Result<Self> {
         log::info!("reading wordlist at {}", wordlist_path);
 
         let total = count_lines(wordlist_path)?;
@@ -40,58 +36,51 @@ impl Fuzzer {
 
         Ok(Self {
             wordlist: reader,
-            req,
             client,
             matcher,
             progress,
         })
     }
 
-    fn next_word(&mut self) -> Option<String> {
-        let mut line = String::new();
-
-        match self.wordlist.read_line(&mut line) {
-            Ok(0) => None,
-            Ok(_) => Some(line.trim_end().to_string()),
-            Err(_) => None,
-        }
-    }
-
-    pub fn start(&mut self) -> anyhow::Result<()> {
-        let stdout = io::stdout();
+    pub fn fuzz(&mut self, base_req: http::Request) -> anyhow::Result<()> {
+        let stdout = std::io::stdout();
         let mut out = stdout.lock();
-        while let Some(word) = self.next_word() {
-            self.progress.inc(1);
 
-            log::debug!("current word is: {}", word);
+        let mut pending = Vec::new();
 
-            self.req = self.req.with_path(&word);
-            let resp = match self.client.send_request(&self.req) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::warn!("request failed for {}: {}", self.req.path, e);
-                    continue;
-                }
-            };
-
-            let body = resp.body_to_string()?;
-            let headers = resp.headers;
-            let status = resp.status;
-            if self.matcher.matches(status) {
-                log::debug!("found match! {status}");
-                writeln!(out, "[{}] {}", status, self.req.path)?;
-            } else {
-                log::debug!("no status match, continuing...");
-            };
-
-            log::debug!(
-                "decoded response:\nStatus: {}\nHeaders: {:?}\nBody: {}",
-                status,
-                headers,
-                body.trim_end()
-            );
+        for line in self.wordlist.by_ref().lines() {
+            let word = line?.trim().to_string();
+            pending.push(word);
         }
-        self.progress.finish_with_message("Done.");
+
+        while !pending.is_empty() || self.client.has_in_flight() {
+            self.client.poll_io()?;
+
+            for resp in self.client.poll_responses()? {
+                if self.matcher.matches(&resp) {
+                    writeln!(out, "[{}] /{}", resp.status, pending.last().unwrap())?;
+                }
+                self.progress.inc(1);
+            }
+
+            while let Some(word) = pending.last() {
+                let req = base_req.with_path(word);
+
+                match self.client.send_request(&req) {
+                    Ok(_) => {
+                        pending.pop();
+                    }
+
+                    Err(ClientError::InFlightFull | ClientError::WouldBlock) => {
+                        break; // backpressure, retry later
+                    }
+
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+
+        self.progress.finish_with_message("done fuzzing");
         Ok(())
     }
 }
@@ -117,8 +106,8 @@ impl Matcher {
         Self { codes }
     }
 
-    pub fn matches(&self, status: u16) -> bool {
-        self.codes.iter().any(|r| r.contains(&status))
+    pub fn matches(&self, resp: &http::Response) -> bool {
+        self.codes.iter().any(|r| r.contains(&resp.status))
     }
 }
 

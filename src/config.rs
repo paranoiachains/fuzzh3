@@ -29,6 +29,7 @@ impl QuicConfig {
 
 #[derive(Parser, Debug)]
 #[command(about, long_about = None)]
+/// QUIC/HTTP3 fuzzer
 pub struct Args {
     #[arg(short, long, value_name = "URL")]
     /// URL to connect to
@@ -37,7 +38,7 @@ pub struct Args {
     /// Target port
     pub port: u16,
     #[arg(long = "no-verify", default_value_t = false)]
-    /// Verify server's certificate
+    /// Don't verify server's certificate
     pub no_verify: bool,
     #[arg(short, long)]
     /// Path to wordlist
@@ -46,6 +47,7 @@ pub struct Args {
     /// HTTP method
     pub method: Method,
     #[arg(short = 'H', value_name = "KEY:VALUE", action = clap::ArgAction::Append)]
+    /// Include headers in request
     pub headers: Vec<String>,
 }
 

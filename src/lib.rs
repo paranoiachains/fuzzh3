@@ -2,13 +2,14 @@ use std::collections::HashMap;
 
 use clap::Parser;
 
-use crate::client::Request;
+use client::http;
 
 mod client;
 mod config;
 mod fuzz;
 
 pub fn run() -> anyhow::Result<()> {
+    // parse cli args
     let args = config::Args::parse();
 
     let url = url::Url::parse(args.url.as_str())?;
@@ -23,7 +24,7 @@ pub fn run() -> anyhow::Result<()> {
         config::Method::Delete => "DELETE",
     };
 
-    let base_req = Request::new(
+    let base_req = http::Request::new(
         url.scheme(),
         url.host_str().unwrap(),
         method,
@@ -31,8 +32,8 @@ pub fn run() -> anyhow::Result<()> {
         headers,
     )?;
 
-    let mut fuzzer = fuzz::Fuzzer::new(base_req, client, &args.wordlist)?;
-    fuzzer.start()?;
+    let mut fuzzer = fuzz::Fuzzer::new(client, &args.wordlist)?;
+    fuzzer.fuzz(base_req)?;
 
     Ok(())
 }
